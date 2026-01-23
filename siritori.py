@@ -55,9 +55,8 @@ kks = pykakasi.kakasi()
 
 # 変数
 game_active = False
-word_history = []  # ここに漢字のまま保存するように変更します
-last_word = ""     # しりとりの繋がりチェック用に、前の単語の「読み」だけ保存します
-last_user_id = None
+word_history = []
+last_word = ""
 
 @bot.event
 async def on_ready():
@@ -66,11 +65,10 @@ async def on_ready():
 
 @bot.command()
 async def start(ctx):
-    global game_active, word_history, last_word, last_user_id
+    global game_active, word_history, last_word
     game_active = True
     word_history = []
     last_word = ""
-    last_user_id = None
     await ctx.send('🟢 しりとりスタート！')
 
 @bot.command()
@@ -90,7 +88,7 @@ async def on_message(message):
     if message.content.startswith('!'):
         return
 
-    global game_active, word_history, last_word, last_user_id
+    global game_active, word_history, last_word
 
     if not game_active:
         return
@@ -98,12 +96,8 @@ async def on_message(message):
     # スペース削除
     content = message.content.strip().replace(" ", "").replace("　", "")
 
+    # 文字がない場合（画像のみなど）は無視
     if not content:
-        return
-
-    # 連続回答防止
-    if last_user_id == message.author.id:
-        await message.add_reaction('🚫')
         return
 
     # --- ローマ字対応 & 記号削除 ---
@@ -111,9 +105,10 @@ async def on_message(message):
     result = kks.convert(converted_content)
     hiragana_word = ''.join([item['hira'] for item in result])
 
-    # 記号を削除（読み仮名の判定用）
+    # 記号を削除
     hiragana_word = re.sub(r'[^ぁ-んー]', '', hiragana_word)
 
+    # 記号を消した結果、空っぽになった場合も無視
     if not hiragana_word:
         return
     # -------------------
@@ -173,7 +168,6 @@ async def on_message(message):
                 game_active = True
                 word_history = []
                 last_word = ""
-                last_user_id = None
                 await message.channel.send('🟢 新しいゲームをスタート！最初の単語をどうぞ！')
             else:
                 await message.channel.send('🔴 お疲れ様！')
@@ -183,18 +177,16 @@ async def on_message(message):
         
         return
 
-    # --- 重複チェック（修正箇所）---
-    # 以前は hiragana_word でチェックしていましたが、
-    # content（入力された文字そのもの）でチェックするように変更しました。
+    # --- 重複チェック ---
+    # 漢字（content）が履歴にあればNG
     if content in word_history:
         await message.channel.send(f'⚠️ 「{content}」はもう出たよ！')
         return
 
     # 受理
-    # 履歴には「漢字」を保存し、次の人のために「読み仮名」をlast_wordに入れます
+    # 履歴には「漢字」を保存
     word_history.append(content)
     last_word = hiragana_word
-    last_user_id = message.author.id
     
     await message.add_reaction('⭕')
 
