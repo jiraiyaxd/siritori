@@ -4,7 +4,7 @@ import pykakasi
 import asyncio
 import jaconv
 import os
-import re  # 【追加】記号を削除するために必要
+import re
 from keep_alive import keep_alive
 
 # --- 設定エリア ---
@@ -34,7 +34,7 @@ NG_WORDS = {
     'セックス','セクロス','エッチ','エロ','エロ動画','エロ画像','AV','かくせいざい',
 }
 
-# ▼▼▼ 2. セーフリスト（読みはNGと同じだが、許したい漢字） ▼▼▼
+# ▼▼▼ 2. セーフリスト ▼▼▼
 SAFE_WORDS = {
     '貸す', '化す', '粕',
     '羽目', '破滅',
@@ -45,20 +45,19 @@ SAFE_WORDS = {
     '去る',
     '移転',
 }
-# ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 # ボットの設定
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# 漢字変換ツールの準備
 kks = pykakasi.kakasi()
 
 # 変数
 game_active = False
-word_history = []
-last_word = ""
+word_history = []  # ここに漢字のまま保存するように変更します
+last_word = ""     # しりとりの繋がりチェック用に、前の単語の「読み」だけ保存します
+last_user_id = None
 
 @bot.event
 async def on_ready():
@@ -67,16 +66,16 @@ async def on_ready():
 
 @bot.command()
 async def start(ctx):
-    global game_active, word_history, last_word
+    global game_active, word_history, last_word, last_user_id
     game_active = True
     word_history = []
     last_word = ""
+    last_user_id = None
     await ctx.send('🟢 しりとりスタート！')
 
 @bot.command()
 async def stop(ctx):
     global game_active
-    
     score = len(word_history)
     game_active = False
     await ctx.send(f'🔴 しりとり終了！今回は **{score}回** 続いたよ！お疲れ様！')
@@ -91,19 +90,28 @@ async def on_message(message):
     if message.content.startswith('!'):
         return
 
-    global game_active, word_history, last_word
+    global game_active, word_history, last_word, last_user_id
 
     if not game_active:
         return
 
-    content = message.content.strip()
+    # スペース削除
+    content = message.content.strip().replace(" ", "").replace("　", "")
 
-    # --- ローマ字対応 ---
+    if not content:
+        return
+
+    # 連続回答防止
+    if last_user_id == message.author.id:
+        await message.add_reaction('🚫')
+        return
+
+    # --- ローマ字対応 & 記号削除 ---
     converted_content = jaconv.alphabet2kana(content)
     result = kks.convert(converted_content)
     hiragana_word = ''.join([item['hira'] for item in result])
 
-    # ★変更点：ひらがなと「ー」以外（記号など）を削除する
+    # 記号を削除（読み仮名の判定用）
     hiragana_word = re.sub(r'[^ぁ-んー]', '', hiragana_word)
 
     if not hiragana_word:
@@ -112,7 +120,6 @@ async def on_message(message):
 
     # --- 禁止ワードチェック ---
     is_ng = False
-    # ここでの hiragana_word は既に記号が消えているので、「NGワード！」と打っても検知されます
     if content in NG_WORDS or converted_content in NG_WORDS or hiragana_word in NG_WORDS:
         is_ng = True
     
@@ -143,7 +150,6 @@ async def on_message(message):
     # --- 「ん」がついた時の処理 ---
     if hiragana_word.endswith('ん'):
         game_active = False
-        
         score = len(word_history)
 
         q_msg = await message.channel.send(
@@ -167,6 +173,7 @@ async def on_message(message):
                 game_active = True
                 word_history = []
                 last_word = ""
+                last_user_id = None
                 await message.channel.send('🟢 新しいゲームをスタート！最初の単語をどうぞ！')
             else:
                 await message.channel.send('🔴 お疲れ様！')
@@ -176,14 +183,18 @@ async def on_message(message):
         
         return
 
-    # --- 重複チェック ---
-    if hiragana_word in word_history:
-        await message.channel.send(f'⚠️ 「{content}（{hiragana_word}）」はもう出たよ！')
+    # --- 重複チェック（修正箇所）---
+    # 以前は hiragana_word でチェックしていましたが、
+    # content（入力された文字そのもの）でチェックするように変更しました。
+    if content in word_history:
+        await message.channel.send(f'⚠️ 「{content}」はもう出たよ！')
         return
 
     # 受理
-    word_history.append(hiragana_word)
+    # 履歴には「漢字」を保存し、次の人のために「読み仮名」をlast_wordに入れます
+    word_history.append(content)
     last_word = hiragana_word
+    last_user_id = message.author.id
     
     await message.add_reaction('⭕')
 
