@@ -3,11 +3,11 @@ from discord.ext import commands
 import pykakasi
 import asyncio
 import jaconv
-import os  # 【追加】環境変数を扱うため
-from keep_alive import keep_alive  # 【追加】サーバーを立ち上げるため
+import os
+import re  # 【追加】記号を削除するために必要
+from keep_alive import keep_alive
 
 # --- 設定エリア ---
-# ★重要★ クラウド側で設定した「DISCORD_TOKEN」という名前の鍵を読み込みます
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 # ▼▼▼ 1. 禁止ワードリスト（ひらがな） ▼▼▼
@@ -77,7 +77,6 @@ async def start(ctx):
 async def stop(ctx):
     global game_active
     
-    # 【追加】終了時にスコアを表示
     score = len(word_history)
     game_active = False
     await ctx.send(f'🔴 しりとり終了！今回は **{score}回** 続いたよ！お疲れ様！')
@@ -104,12 +103,16 @@ async def on_message(message):
     result = kks.convert(converted_content)
     hiragana_word = ''.join([item['hira'] for item in result])
 
+    # ★変更点：ひらがなと「ー」以外（記号など）を削除する
+    hiragana_word = re.sub(r'[^ぁ-んー]', '', hiragana_word)
+
     if not hiragana_word:
         return
     # -------------------
 
     # --- 禁止ワードチェック ---
     is_ng = False
+    # ここでの hiragana_word は既に記号が消えているので、「NGワード！」と打っても検知されます
     if content in NG_WORDS or converted_content in NG_WORDS or hiragana_word in NG_WORDS:
         is_ng = True
     
@@ -141,12 +144,11 @@ async def on_message(message):
     if hiragana_word.endswith('ん'):
         game_active = False
         
-        # 【追加】今の回数を計算
         score = len(word_history)
 
         q_msg = await message.channel.send(
             f'😱 「{content}（{hiragana_word}）」... 「ん」がついたからゲームオーバー！\n'
-            f'📊 今回は **{score}回** 続いたよ！\n\n'  # ←ここに回数表示を追加
+            f'📊 今回は **{score}回** 続いたよ！\n\n'
             f'**どうする？（30秒以内に選択）**\n'
             f'🔄 : もう一度最初から始める\n'
             f'❌ : 終了する'
@@ -185,7 +187,7 @@ async def on_message(message):
     
     await message.add_reaction('⭕')
 
-# --- 【変更】Webサーバーを立ち上げてからボットを起動 ---
+# --- Webサーバーを立ち上げてからボットを起動 ---
 keep_alive()
 
 try:
