@@ -10,6 +10,9 @@ from keep_alive import keep_alive
 # --- 設定エリア ---
 TOKEN = os.getenv("DISCORD_TOKEN")
 
+# ★★★ 指定チャンネルID（この部屋以外では動きません） ★★★
+TARGET_CHANNEL_ID = 1294367814865518592
+
 # ▼▼▼ 1. 禁止ワードリスト（ひらがな） ▼▼▼
 NG_WORDS = {
     'あなる', 'あま', 'いんわい', 'いんぽ', 'いやがらせ', 'いらまちお', 'いんぴ', 'いまらちお', 'うせろ', 
@@ -65,6 +68,10 @@ async def on_ready():
 
 @bot.command()
 async def start(ctx):
+    # ★ 指定チャンネル以外なら無視
+    if ctx.channel.id != TARGET_CHANNEL_ID:
+        return
+
     global game_active, word_history, last_word
     game_active = True
     word_history = []
@@ -73,6 +80,10 @@ async def start(ctx):
 
 @bot.command()
 async def stop(ctx):
+    # ★ 指定チャンネル以外なら無視
+    if ctx.channel.id != TARGET_CHANNEL_ID:
+        return
+
     global game_active
     score = len(word_history)
     game_active = False
@@ -81,6 +92,10 @@ async def stop(ctx):
 @bot.event
 async def on_message(message):
     if message.author.bot:
+        return
+
+    # ★★★ 指定チャンネル以外なら即終了（無視） ★★★
+    if message.channel.id != TARGET_CHANNEL_ID:
         return
 
     await bot.process_commands(message)
