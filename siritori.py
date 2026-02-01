@@ -1,17 +1,18 @@
 import discord
 from discord.ext import commands
+import pykakasi
 import asyncio
 import jaconv
 import os
 import re
-import requests  # ★これを使います（Googleに聞くため）
+import aiohttp # ★ requestsの代わりにこれを使います
 from keep_alive import keep_alive
 
 # --- 設定エリア ---
 TOKEN = os.getenv("DISCORD_TOKEN")
 TARGET_CHANNEL_ID = 1294367814865518592
 
-# ▼▼▼ 1. 禁止ワードリスト（ひらがな） ▼▼▼
+# ▼ 禁止ワード ▼
 NG_WORDS = {
     'あなる', 'あま', 'いんわい', 'いんぽ', 'いやがらせ', 'いらまちお', 'いんぴ', 'いまらちお', 'うせろ', 
     'うざい', 'うるさい', 'うぐ', 'えろ', 'おな', 'おなにー', 'おまんこ', 'おまんまん', 'おちんちん',
@@ -35,62 +36,51 @@ NG_WORDS = {
     'セックス','セクロス','エッチ','エロ','エロ動画','エロ画像','AV','かくせいざい',
 }
 
-# ▼▼▼ 2. セーフリスト ▼▼▼
+# ▼ セーフワード ▼
 SAFE_WORDS = {
-    '貸す', '化す', '粕',
-    '羽目', '破滅',
-    '品', '科', '支那',
-    '雨', '尼',
-    '巫女',
-    '明日',
-    '去る',
-    '移転',
+    '貸す', '化す', '粕', '羽目', '破滅', '品', '科', '支那', '雨', '尼', '巫女', '明日', '去る', '移転',
 }
 
-# ボットの設定
+# ボット設定
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # 変数
+kks = pykakasi.kakasi()
 game_active = False
 word_history = []
 last_word = ""
 
-# --- ★★★ 革新的機能：Google IME APIで変換する関数 ★★★ ---
-def google_convert(text):
+# --- ★★★ Google IME API (非同期版) ★★★ ---
+async def google_convert(text):
+    url = "http://www.google.com/transliterate"
+    params = {'langpair': 'ja-Hira|ja', 'text': text}
     try:
-        # Googleの非公開APIを叩いて、ひらがな変換を取得
-        url = "http://www.google.com/transliterate"
-        params = {
-            'langpair': 'ja-Hira|ja', 
-            'text': text
-        }
-        response = requests.get(url, params=params, timeout=3)
-        data = response.json()
-        
-        # Googleからの返答を解析（一番確率の高い読みを取得）
-        # dataの構造: [['漢字', ['かんじ', 'カンジ',...]], ...]
-        reading = ""
-        for segment in data:
-            reading += segment[1][0] # 各文節の最初の候補（ひらがな）を結合
-            
-        return reading
+        # aiohttpを使って、ボットを止めずに通信する
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=2) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    reading = ""
+                    for segment in data:
+                        reading += segment[1][0]
+                    return reading
+                else:
+                    return None
     except:
-        # ネットが繋がらないときなどは、そのまま返す
-        return text
-# ---------------------------------------------------------
+        # 通信エラーやタイムアウト時はNoneを返して、従来の方法に切り替える
+        return None
+# ---------------------------------------------
 
 @bot.event
 async def on_ready():
-    print(f'{bot.user} としてログインしました！')
-    print('準備完了。「!start」で開始、「!stop」で終了です。')
+    print(f'{bot.user} ログイン完了')
+    print('準備OK！')
 
 @bot.command()
 async def start(ctx):
-    if ctx.channel.id != TARGET_CHANNEL_ID:
-        return
-
+    if ctx.channel.id != TARGET_CHANNEL_ID: return
     global game_active, word_history, last_word
     game_active = True
     word_history = []
@@ -99,149 +89,116 @@ async def start(ctx):
 
 @bot.command()
 async def stop(ctx):
-    if ctx.channel.id != TARGET_CHANNEL_ID:
-        return
-
+    if ctx.channel.id != TARGET_CHANNEL_ID: return
     global game_active
     score = len(word_history)
     game_active = False
-    await ctx.send(f'🔴 しりとり終了！今回は **{score}回** 続いたよ！お疲れ様！')
+    await ctx.send(f'🔴 終了！記録: {score}回')
 
 @bot.event
 async def on_message(message):
-    if message.author.bot:
-        return
-    
-    if message.channel.id != TARGET_CHANNEL_ID:
-        return
-
+    if message.author.bot: return
+    if message.channel.id != TARGET_CHANNEL_ID: return
     await bot.process_commands(message)
-
-    if message.content.startswith('!'):
-        return
+    if message.content.startswith('!'): return
 
     global game_active, word_history, last_word
+    if not game_active: return
 
-    if not game_active:
-        return
-
-    # スペース削除
     original_content = message.content.strip().replace(" ", "").replace("　", "")
-    if not original_content:
-        return
+    if not original_content: return
 
-    # --- 読み仮名変換ロジック ---
+    # --- 読み仮名処理 ---
+    hiragana_word = ""
     
-    # 1. もしユーザーが「騎士道（きしどう）」のように手動指定してくれたらそれを最優先
+    # 1. カッコ指定チェック
     match = re.match(r'^(.*?)[（\(](.*)[）\)]$', original_content)
-    
     if match:
-        content_display = match.group(1) 
-        reading_input = match.group(2)
-        hiragana_word = jaconv.kata2hira(reading_input)
-        content = content_display
+        content = match.group(1)
+        hiragana_word = jaconv.kata2hira(match.group(2))
     else:
-        # 2. 手動指定がなければ、Google先生に聞く！
         content = original_content
-        # カタカナを一旦ひらがなにしてから、漢字混じりの場合もGoogleで処理
-        # Google APIは「漢字→ひらがな」が得意
-        hiragana_word = google_convert(content)
         
-        # 念の為 jaconv でカタカナ→ひらがな補正（Googleがカタカナで返すこともあるため）
-        hiragana_word = jaconv.kata2hira(hiragana_word)
+        # 2. Google先生に聞く（非同期）
+        google_result = await google_convert(content)
+        
+        if google_result:
+            hiragana_word = google_result
+            # Googleがカタカナを返すことがあるので念の為変換
+            hiragana_word = jaconv.kata2hira(hiragana_word)
+        else:
+            # 3. Googleがダメなら従来のpykakasiで変換
+            converted_content = jaconv.alphabet2kana(content)
+            result = kks.convert(converted_content)
+            hiragana_word = ''.join([item['hira'] for item in result])
 
-    # 記号を削除
+    # 記号削除
     hiragana_word = re.sub(r'[^ぁ-んー]', '', hiragana_word)
+    if not hiragana_word: return
 
-    if not hiragana_word:
-        return
-    # ---------------------------
-
-    # --- 禁止ワードチェック ---
+    # --- 禁止ワード ---
     is_ng = False
     if content in NG_WORDS or original_content in NG_WORDS or hiragana_word in NG_WORDS:
         is_ng = True
-    
     if is_ng and (content in SAFE_WORDS or original_content in SAFE_WORDS):
         is_ng = False
 
     if is_ng:
-        try:
-            await message.delete()
-        except discord.Forbidden:
-            pass
-        await message.channel.send(f'🙅‍♂️ 禁止用語が含まれているから消すよ！（{message.author.mention}）')
+        try: await message.delete()
+        except: pass
+        await message.channel.send(f'🙅‍♂️ 禁止用語！（{message.author.mention}）')
         return
 
-    # --- しりとり繋がりチェック ---
+    # --- 繋がりチェック ---
     if last_word:
         prev_end = last_word[-1]
-        if prev_end == 'ー': 
-            prev_end = last_word[-2]
-        
+        if prev_end == 'ー': prev_end = last_word[-2]
         trans_table = str.maketrans('ぁぃぅぇぉっゃゅょゎ', 'あいうえおつやゆよわ')
         prev_end_normalized = prev_end.translate(trans_table)
 
         if hiragana_word[0] != prev_end_normalized and hiragana_word[0] != prev_end:
-            # Google変換でも間違えることは稀にあるので、その場合は手動入力を促す
+            # Google変換でも間違えることはあるのでメッセージ
             await message.channel.send(
                 f'⚠️ つながってないよ！\n'
-                f'「{content}」は「{hiragana_word}」って読んだけど、「{prev_end}」から始まってないよ。\n'
-                f'※読みが違う場合は `漢字（よみ）` のようにカッコで指定してね！'
+                f'「{content}」は「{hiragana_word}」と認識したよ。\n'
+                f'読みが違う場合は `漢字（よみ）` で教えてね！'
             )
             return
 
-    # --- 「ん」がついた時の処理 ---
+    # --- 「ん」チェック ---
     if hiragana_word.endswith('ん'):
         game_active = False
         score = len(word_history)
-
-        q_msg = await message.channel.send(
-            f'😱 「{content}（{hiragana_word}）」... 「ん」がついたからゲームオーバー！\n'
-            f'📊 今回は **{score}回** 続いたよ！\n\n'
-            f'**どうする？（30秒以内に選択）**\n'
-            f'🔄 : もう一度最初から始める\n'
-            f'❌ : 終了する'
-        )
-        
+        q_msg = await message.channel.send(f'😱 「{content}（{hiragana_word}）」... 「ん」がついた！\n記録: **{score}回**\n\n🔄 再開 | ❌ 終了')
         await q_msg.add_reaction('🔄')
         await q_msg.add_reaction('❌')
 
         def check(reaction, user):
             return user != bot.user and str(reaction.emoji) in ['🔄', '❌'] and reaction.message.id == q_msg.id
-
         try:
             reaction, user = await bot.wait_for('reaction_add', timeout=30.0, check=check)
-
             if str(reaction.emoji) == '🔄':
                 game_active = True
                 word_history = []
                 last_word = ""
-                await message.channel.send('🟢 新しいゲームをスタート！最初の単語をどうぞ！')
+                await message.channel.send('🟢 再スタート！')
             else:
                 await message.channel.send('🔴 お疲れ様！')
-
         except asyncio.TimeoutError:
-            await message.channel.send('⏰ 時間切れのため終了！！！ ')
-        
+            await message.channel.send('⏰ 時間切れ終了')
         return
 
     # --- 重複チェック ---
     if content in word_history:
-        await message.channel.send(f'⚠️ 「{content}」はもう出たよ！')
+        await message.channel.send(f'⚠️ 「{content}」は既出！')
         return
 
-    # 受理
     word_history.append(content)
     last_word = hiragana_word
-    
     await message.add_reaction('⭕')
 
-# --- Webサーバーを立ち上げてからボットを起動 ---
 keep_alive()
-
 try:
     bot.run(TOKEN)
 except:
-    print("TOKENが見つかりません。環境変数が設定されているか確認してください。")
-
+    print("TOKENエラー")
