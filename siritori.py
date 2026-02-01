@@ -1,16 +1,14 @@
 import discord
 from discord.ext import commands
-import pykakasi
 import asyncio
 import jaconv
 import os
 import re
+import requests  # ★これを使います（Googleに聞くため）
 from keep_alive import keep_alive
 
 # --- 設定エリア ---
 TOKEN = os.getenv("DISCORD_TOKEN")
-
-# ★★★ 指定チャンネルID（この部屋以外では動きません） ★★★
 TARGET_CHANNEL_ID = 1294367814865518592
 
 # ▼▼▼ 1. 禁止ワードリスト（ひらがな） ▼▼▼
@@ -54,12 +52,34 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-kks = pykakasi.kakasi()
-
 # 変数
 game_active = False
 word_history = []
 last_word = ""
+
+# --- ★★★ 革新的機能：Google IME APIで変換する関数 ★★★ ---
+def google_convert(text):
+    try:
+        # Googleの非公開APIを叩いて、ひらがな変換を取得
+        url = "http://www.google.com/transliterate"
+        params = {
+            'langpair': 'ja-Hira|ja', 
+            'text': text
+        }
+        response = requests.get(url, params=params, timeout=3)
+        data = response.json()
+        
+        # Googleからの返答を解析（一番確率の高い読みを取得）
+        # dataの構造: [['漢字', ['かんじ', 'カンジ',...]], ...]
+        reading = ""
+        for segment in data:
+            reading += segment[1][0] # 各文節の最初の候補（ひらがな）を結合
+            
+        return reading
+    except:
+        # ネットが繋がらないときなどは、そのまま返す
+        return text
+# ---------------------------------------------------------
 
 @bot.event
 async def on_ready():
@@ -68,7 +88,6 @@ async def on_ready():
 
 @bot.command()
 async def start(ctx):
-    # ★ 指定チャンネル以外なら無視
     if ctx.channel.id != TARGET_CHANNEL_ID:
         return
 
@@ -76,11 +95,10 @@ async def start(ctx):
     game_active = True
     word_history = []
     last_word = ""
-    await ctx.send('🟢 しりとりスタート！')
+    await ctx.send('🟢 しりとりスタート！(Google先生モード)')
 
 @bot.command()
 async def stop(ctx):
-    # ★ 指定チャンネル以外なら無視
     if ctx.channel.id != TARGET_CHANNEL_ID:
         return
 
@@ -93,8 +111,7 @@ async def stop(ctx):
 async def on_message(message):
     if message.author.bot:
         return
-
-    # ★★★ 指定チャンネル以外なら即終了（無視） ★★★
+    
     if message.channel.id != TARGET_CHANNEL_ID:
         return
 
@@ -109,31 +126,43 @@ async def on_message(message):
         return
 
     # スペース削除
-    content = message.content.strip().replace(" ", "").replace("　", "")
-
-    # 文字がない場合（画像のみなど）は無視
-    if not content:
+    original_content = message.content.strip().replace(" ", "").replace("　", "")
+    if not original_content:
         return
 
-    # --- ローマ字対応 & 記号削除 ---
-    converted_content = jaconv.alphabet2kana(content)
-    result = kks.convert(converted_content)
-    hiragana_word = ''.join([item['hira'] for item in result])
+    # --- 読み仮名変換ロジック ---
+    
+    # 1. もしユーザーが「騎士道（きしどう）」のように手動指定してくれたらそれを最優先
+    match = re.match(r'^(.*?)[（\(](.*)[）\)]$', original_content)
+    
+    if match:
+        content_display = match.group(1) 
+        reading_input = match.group(2)
+        hiragana_word = jaconv.kata2hira(reading_input)
+        content = content_display
+    else:
+        # 2. 手動指定がなければ、Google先生に聞く！
+        content = original_content
+        # カタカナを一旦ひらがなにしてから、漢字混じりの場合もGoogleで処理
+        # Google APIは「漢字→ひらがな」が得意
+        hiragana_word = google_convert(content)
+        
+        # 念の為 jaconv でカタカナ→ひらがな補正（Googleがカタカナで返すこともあるため）
+        hiragana_word = jaconv.kata2hira(hiragana_word)
 
     # 記号を削除
     hiragana_word = re.sub(r'[^ぁ-んー]', '', hiragana_word)
 
-    # 記号を消した結果、空っぽになった場合も無視
     if not hiragana_word:
         return
-    # -------------------
+    # ---------------------------
 
     # --- 禁止ワードチェック ---
     is_ng = False
-    if content in NG_WORDS or converted_content in NG_WORDS or hiragana_word in NG_WORDS:
+    if content in NG_WORDS or original_content in NG_WORDS or hiragana_word in NG_WORDS:
         is_ng = True
     
-    if is_ng and (content in SAFE_WORDS or converted_content in SAFE_WORDS):
+    if is_ng and (content in SAFE_WORDS or original_content in SAFE_WORDS):
         is_ng = False
 
     if is_ng:
@@ -154,7 +183,12 @@ async def on_message(message):
         prev_end_normalized = prev_end.translate(trans_table)
 
         if hiragana_word[0] != prev_end_normalized and hiragana_word[0] != prev_end:
-            await message.channel.send(f'⚠️ つながってないよ！\n「{content}（{hiragana_word}）」は、「{prev_end}」から始まらないよ。')
+            # Google変換でも間違えることは稀にあるので、その場合は手動入力を促す
+            await message.channel.send(
+                f'⚠️ つながってないよ！\n'
+                f'「{content}」は「{hiragana_word}」って読んだけど、「{prev_end}」から始まってないよ。\n'
+                f'※読みが違う場合は `漢字（よみ）` のようにカッコで指定してね！'
+            )
             return
 
     # --- 「ん」がついた時の処理 ---
@@ -193,13 +227,11 @@ async def on_message(message):
         return
 
     # --- 重複チェック ---
-    # 漢字（content）が履歴にあればNG
     if content in word_history:
         await message.channel.send(f'⚠️ 「{content}」はもう出たよ！')
         return
 
     # 受理
-    # 履歴には「漢字」を保存
     word_history.append(content)
     last_word = hiragana_word
     
