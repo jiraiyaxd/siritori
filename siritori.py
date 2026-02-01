@@ -95,7 +95,7 @@ async def start(ctx):
     game_active = True
     word_history = []
     last_word = ""
-    await ctx.send('🟢 しりとりスタート！(Google先生モード)')
+    await ctx.send('🟢 しりとりスタート！')
 
 @bot.command()
 async def stop(ctx):
@@ -244,3 +244,4 @@ try:
     bot.run(TOKEN)
 except:
     print("TOKENが見つかりません。環境変数が設定されているか確認してください。")
+
