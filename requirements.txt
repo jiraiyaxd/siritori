@@ -1,4 +1,5 @@
 discord.py
-jaconv
 pykakasi
-flask
+jaconv
+Flask
+requests
