@@ -91,7 +91,7 @@ async def start(ctx):
     game_active = True
     word_history = []
     last_word = ""
-    await ctx.send('🟢 しりとりスタート！\n（※「？」を含む会話は無視します）')
+    await ctx.send('🟢 しりとりスタート！\n')
 
 @bot.command()
 async def stop(ctx):
@@ -210,3 +210,4 @@ try:
     bot.run(TOKEN)
 except:
     print("TOKENエラー")
+
