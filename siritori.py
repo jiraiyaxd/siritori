@@ -205,9 +205,23 @@ async def on_message(message):
     last_word = hiragana_word
     await message.add_reaction('⭕')
 
+# --- ここから下を書き換えてください ---
+
 keep_alive()
+
+# トークンがそもそも読み込めているか確認（セキュリティのため最初の5文字だけ表示）
+if TOKEN:
+    print(f"🔑 トークン読み込み成功: {TOKEN[:5]}...")
+else:
+    print("❌ トークンが読み込めていません（None です）")
+
+# 接続試行（エラーを隠さず全て表示するモード）
 try:
     bot.run(TOKEN)
-except:
-    print("TOKENエラー")
-
+except Exception as e:
+    print("\n========== ⚠️ エラー詳細 ⚠️ ==========")
+    print(f"エラーの種類: {type(e).__name__}")
+    print(f"エラーの内容: {e}")
+    print("======================================\n")
+    # 詳細なログを出すために再送
+    raise e
