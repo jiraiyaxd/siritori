@@ -12,7 +12,7 @@ from keep_alive import keep_alive
 TOKEN = os.getenv("DISCORD_TOKEN")
 TARGET_CHANNEL_ID = 1294367814865518592
 
-# ▼ 辞書（固定の読み方）
+# ▼ 辞書
 CUSTOM_DICTIONARY = {
     '騎士道': 'きしどう',
     '烏骨鶏': 'うこっけい',
@@ -82,7 +82,7 @@ async def google_convert(text):
 
 @bot.event
 async def on_ready():
-    print(f'{bot.user} ログイン完了')
+    print(f'✅ ログイン成功: {bot.user}')
 
 @bot.command()
 async def start(ctx):
@@ -119,11 +119,9 @@ async def on_message(message):
     if '?' in original_content or '？' in original_content:
         return
 
-    # ★ 先に「重複チェック」を行う（バグ修正の肝）
-    # これで「反応しなかったからもう一回打った」時にエラーにならず、「既出だよ」で済みます
+    # ★ 重複チェックを先に実行（修正済み）
     if original_content in word_history:
-        # すでにリストにある場合は、軽くリアクションだけ返すか、無視する
-        await message.add_reaction('♻️') # 「もうあるよ」の合図
+        await message.add_reaction('♻️') # 既出マーク
         return
 
     # --- 読み仮名変換 ---
@@ -162,7 +160,6 @@ async def on_message(message):
         return
 
     # --- 繋がりチェック ---
-    # ここに到達する時点で「重複」は排除されているので、安心して比較できます
     if last_word:
         prev_end = last_word[-1]
         if prev_end == 'ー': prev_end = last_word[-2]
@@ -200,28 +197,14 @@ async def on_message(message):
             await message.channel.send('⏰ 時間切れ終了')
         return
 
-    # 履歴に追加
     word_history.append(content)
     last_word = hiragana_word
     await message.add_reaction('⭕')
 
-# --- ここから下を書き換えてください ---
-
+# サーバー起動とBot起動
 keep_alive()
 
-# トークンがそもそも読み込めているか確認（セキュリティのため最初の5文字だけ表示）
-if TOKEN:
-    print(f"🔑 トークン読み込み成功: {TOKEN[:5]}...")
+if not TOKEN:
+    print("❌ エラー: 環境変数 DISCORD_TOKEN が設定されていません")
 else:
-    print("❌ トークンが読み込めていません（None です）")
-
-# 接続試行（エラーを隠さず全て表示するモード）
-try:
     bot.run(TOKEN)
-except Exception as e:
-    print("\n========== ⚠️ エラー詳細 ⚠️ ==========")
-    print(f"エラーの種類: {type(e).__name__}")
-    print(f"エラーの内容: {e}")
-    print("======================================\n")
-    # 詳細なログを出すために再送
-    raise e
